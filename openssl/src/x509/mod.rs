@@ -23,8 +23,8 @@ use std::ptr;
 use std::str;
 
 use crate::asn1::{
-    Asn1BitStringRef, Asn1Enumerated, Asn1Integer, Asn1IntegerRef, Asn1Object, Asn1ObjectRef,
-    Asn1OctetStringRef, Asn1StringRef, Asn1TimeRef, Asn1Type,
+    Asn1BitStringRef, Asn1Enumerated, Asn1GeneralizedTime, Asn1Integer, Asn1IntegerRef, Asn1Object,
+    Asn1ObjectRef, Asn1OctetStringRef, Asn1StringRef, Asn1TimeRef, Asn1Type,
 };
 use crate::bio::MemBioSlice;
 use crate::conf::ConfRef;
@@ -37,7 +37,10 @@ use crate::ssl::SslRef;
 use crate::stack::{Stack, StackRef, Stackable};
 use crate::string::OpensslString;
 use crate::util::{self, ForeignTypeExt, ForeignTypeRefExt};
-pub use crate::x509::extension::CrlNumber;
+pub use crate::x509::extension::{
+    AuthorityInformationAccess, CertificateIssuer, CrlNumber, DeltaCrlIndicator, FreshestCrl,
+    InvalidityDate, IssuerAlternativeName, ReasonCode,
+};
 use crate::{cvt, cvt_n, cvt_p, cvt_p_const};
 use openssl_macros::corresponds;
 
@@ -1745,11 +1748,15 @@ impl X509RevokedRef {
     }
 }
 
-/// The CRL entry extension identifying the reason for revocation see [`CrlReason`],
-/// this is as defined in RFC 5280 Section 5.3.1.
-pub enum ReasonCode {}
+// SAFETY: InvalidityDate is defined to be a Asn1GeneralizedTime in the RFC
+// and in OpenSSL.
+unsafe impl ExtensionType for InvalidityDate<'_> {
+    const NID: Nid = Nid::INVALIDITY_DATE;
 
-// SAFETY: CertificateIssuer is defined to be a stack of GeneralName in the RFC
+    type Output = Asn1GeneralizedTime;
+}
+
+// SAFETY: ReasonCode is defined to be a Asn1Enumerated in the RFC
 // and in OpenSSL.
 unsafe impl ExtensionType for ReasonCode {
     const NID: Nid = Nid::from_raw(ffi::NID_crl_reason);
@@ -1757,20 +1764,13 @@ unsafe impl ExtensionType for ReasonCode {
     type Output = Asn1Enumerated;
 }
 
-/// The CRL entry extension identifying the issuer of a certificate used in
-/// indirect CRLs, as defined in RFC 5280 Section 5.3.3.
-pub enum CertificateIssuer {}
-
 // SAFETY: CertificateIssuer is defined to be a stack of GeneralName in the RFC
 // and in OpenSSL.
-unsafe impl ExtensionType for CertificateIssuer {
+unsafe impl ExtensionType for CertificateIssuer<'_> {
     const NID: Nid = Nid::from_raw(ffi::NID_certificate_issuer);
 
     type Output = Stack<GeneralName>;
 }
-
-/// The CRL extension identifying how to access information and services for the issuer of the CRL
-pub enum AuthorityInformationAccess {}
 
 // SAFETY: AuthorityInformationAccess is defined to be a stack of AccessDescription in the RFC
 // and in OpenSSL.
@@ -1784,7 +1784,32 @@ unsafe impl ExtensionType for AuthorityInformationAccess {
 // and in OpenSSL.
 unsafe impl ExtensionType for CrlNumber {
     const NID: Nid = Nid::CRL_NUMBER;
+
     type Output = Asn1Integer;
+}
+
+// SAFETY: FreshestCrl is defined to be a stack of DistPoint in the RFC
+// and in OpenSSL.
+unsafe impl ExtensionType for FreshestCrl {
+    const NID: Nid = Nid::FRESHEST_CRL;
+
+    type Output = Stack<DistPoint>;
+}
+
+// SAFETY: DeltaCrlIndicator is defined to be a Asn1Integer in the RFC
+// and in OpenSSL.
+unsafe impl ExtensionType for DeltaCrlIndicator {
+    const NID: Nid = Nid::DELTA_CRL;
+
+    type Output = Asn1Integer;
+}
+
+// SAFETY: IssuerAlternativeName is defined to be a stack of GeneralName in the RFC
+// and in OpenSSL.
+unsafe impl ExtensionType for IssuerAlternativeName {
+    const NID: Nid = Nid::ISSUER_ALT_NAME;
+
+    type Output = Stack<GeneralName>;
 }
 
 /// A builder used to construct an `X509Crl`.

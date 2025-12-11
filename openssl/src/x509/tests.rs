@@ -11,10 +11,10 @@ use crate::rsa::Rsa;
 use crate::ssl::SslFiletype;
 use crate::stack::Stack;
 use crate::x509::extension::{
-    AuthorityInformationAccess as ExtAuthorityInformationAccess, AuthorityKeyIdentifier, BasicConstraints,
-    CertificateIssuer as ExtCertificateIssuer, CrlNumber, DeltaCrlIndicator, ExtendedKeyUsage,
-    FreshestCrl, InvalidityDate, IssuerAlternativeName, IssuingDistributionPoint, KeyUsage,
-    ReasonCode as ExtReasonCode, SubjectAlternativeName, SubjectKeyIdentifier,
+    AuthorityInformationAccess, AuthorityKeyIdentifier, BasicConstraints, CertificateIssuer,
+    CrlNumber, DeltaCrlIndicator, ExtendedKeyUsage, FreshestCrl, InvalidityDate,
+    IssuerAlternativeName, IssuingDistributionPoint, KeyUsage, ReasonCode, SubjectAlternativeName,
+    SubjectKeyIdentifier,
 };
 #[cfg(not(any(boringssl, awslc)))]
 use crate::x509::store::X509Lookup;
@@ -36,8 +36,6 @@ use crate::x509::{
 use foreign_types::ForeignType;
 use hex::{self, FromHex};
 use libc::time_t;
-
-use super::{AuthorityInformationAccess, CertificateIssuer, ReasonCode};
 
 fn pkey() -> PKey<Private> {
     let rsa = Rsa::generate(2048).unwrap();
@@ -466,7 +464,7 @@ fn x509_extension_to_der() {
             b"\x30\x13\x06\x03\x55\x1d\x12\x04\x0c\x30\x0a\x82\x08\x74\x65\x73\x74\x2e\x63\x6f\x6d",
         ),
         (
-            ExtAuthorityInformationAccess::new(access_descriptions().unwrap())
+            AuthorityInformationAccess::new(access_descriptions().unwrap())
                 .build()
                 .unwrap(),
             b"\x30\x54\x06\x08\x2b\x06\x01\x05\x05\x07\x01\x01\x04\x48\x30\x46\x30\x22\x06\x08\x2b\x06\x01\x05\x05\x07\x30\x02\x86\x16\x68\x74\x74\x70\x3a\x2f\x2f\x74\x65\x73\x74\x2e\x63\x6f\x6d\x2f\x63\x61\x2e\x63\x72\x74\x30\x20\x06\x08\x2b\x06\x01\x05\x05\x07\x30\x01\x86\x14\x68\x74\x74\x70\x3a\x2f\x2f\x6f\x63\x73\x70\x2e\x74\x65\x73\x74\x2e\x63\x6f\x6d"
@@ -502,13 +500,13 @@ fn x509_extension_to_der() {
             b"\x30\x18\x06\x03\x55\x1d\x18\x04\x11\x18\x0f\x31\x39\x37\x30\x30\x31\x30\x31\x30\x30\x30\x30\x30\x30\x5a",
         ),
         (
-            ExtCertificateIssuer::new(&name)
+            CertificateIssuer::new(&name)
             .build()
             .unwrap(),
             b"\x30\x22\x06\x03\x55\x1d\x1d\x04\x1b\x30\x19\xa4\x17\x30\x15\x31\x13\x30\x11\x06\x03\x55\x04\x03\x0c\x0a\x66\x6f\x6f\x62\x61\x72\x2e\x63\x6f\x6d",
         ),
         (
-            ExtReasonCode::new(CrlReason::KEY_COMPROMISE)
+            ReasonCode::new(CrlReason::KEY_COMPROMISE)
             .build()
             .unwrap(),
             b"\x30\x0a\x06\x03\x55\x1d\x15\x04\x03\x0a\x01\x01",
@@ -820,7 +818,7 @@ fn test_crl_entry_extensions() {
     let entry = &revoked_certs[0];
 
     let (critical, issuer) = entry
-        .extension::<CertificateIssuer>()
+        .extension::<CertificateIssuer<'_>>()
         .unwrap()
         .expect("Certificate issuer extension should be present");
     assert!(critical, "Certificate issuer extension is critical");
@@ -1453,7 +1451,7 @@ fn test_x509_revoked_builder() {
     builder.set_revocation_date(&d).unwrap();
 
     let exts = {
-        let rc = ExtReasonCode::new(CrlReason::PRIVILEGE_WITHDRAWN)
+        let rc = ReasonCode::new(CrlReason::PRIVILEGE_WITHDRAWN)
             .critical()
             .build()
             .unwrap();
@@ -1463,7 +1461,7 @@ fn test_x509_revoked_builder() {
             .append_entry_by_nid(Nid::COMMONNAME, "foobar.com")
             .unwrap();
         let issuer = issuer.build();
-        let ci = ExtCertificateIssuer::new(&issuer).build().unwrap();
+        let ci = CertificateIssuer::new(&issuer).build().unwrap();
 
         let id = InvalidityDate::new(&d).build().unwrap();
 
@@ -1563,7 +1561,7 @@ fn test_x509_crl_builder() {
     let ian = IssuerAlternativeName::new(ca_cert.subject_alt_names().unwrap())
         .build()
         .unwrap();
-    let aia = ExtAuthorityInformationAccess::new(access_descriptions().unwrap())
+    let aia = AuthorityInformationAccess::new(access_descriptions().unwrap())
         .build()
         .unwrap();
 
@@ -1618,4 +1616,67 @@ fn test_x509_crl_delta() {
     let exts = vec![dci];
     let crl = build_crl(&pkey, &ca_cert, exts).unwrap();
     assert!(crl.verify(&pkey).unwrap());
+}
+
+#[test]
+fn test_crl_extensions() {
+    let crl = include_bytes!("../../test/crl_extensions.crl");
+    let crl = X509Crl::from_pem(crl).unwrap();
+    // AuhtorityKeyIdentifier is missing
+    let (critical, ian) = crl
+        .extension::<IssuerAlternativeName>()
+        .unwrap()
+        .expect("Issuer Alternative Name extension should be present");
+    assert!(
+        !critical,
+        "Issuer Alternative Name extension is not critical"
+    );
+    assert_eq!(
+        ian.len(),
+        1,
+        "Issuer Alternative Name should have one entry"
+    );
+    assert_eq!(ian[0].dnsname(), Some("ca.example.com"));
+
+    let (critical, n) = crl
+        .extension::<CrlNumber>()
+        .unwrap()
+        .expect("Crl Number extension should be present");
+    assert!(!critical, "Crl Number extension is not critical");
+    assert_eq!(n.to_bn().unwrap().to_dec_str().unwrap().to_string(), "1");
+
+    let (critical, access_info) = crl
+        .extension::<AuthorityInformationAccess>()
+        .unwrap()
+        .expect("Authority Information Access extension should be present");
+    assert!(
+        !critical,
+        "Authority Information Access extension is not critical"
+    );
+    assert_eq!(
+        access_info.len(),
+        2,
+        "Authority Information Access should have two entries"
+    );
+    assert_eq!(access_info[0].method().nid(), Nid::AD_CA_ISSUERS);
+    assert_eq!(
+        access_info[0].location().uri(),
+        Some("http://example.com/ca.pem")
+    );
+    assert_eq!(access_info[1].method().nid(), Nid::AD_OCSP);
+    assert_eq!(
+        access_info[1].location().uri(),
+        Some("http://ocsp.example.com")
+    );
+
+    let (critical, dps) = crl
+        .extension::<FreshestCrl>()
+        .unwrap()
+        .expect("Freshest Crl extension should be present");
+    assert!(!critical, "Freshest Crl extension is not critical");
+    assert_eq!(dps.len(), 1, "Freshest Crl should have one entry");
+    assert_eq!(
+        dps[0].distpoint().unwrap().fullname().unwrap()[0].uri(),
+        Some("http://example.com/delta.crl")
+    )
 }
