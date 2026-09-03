@@ -1414,6 +1414,24 @@ fn crl_uri_dist_point_name(uri: &str) -> DistPointName {
 }
 
 #[test]
+fn test_dist_point_name_relative() {
+    let mut name = X509Name::builder().unwrap();
+    name.append_entry_by_nid(Nid::COMMONNAME, "rdn").unwrap();
+    let name = name.build();
+
+    let mut entries = Stack::new().unwrap();
+    for entry in name.entries() {
+        entries.push(entry.to_owned().unwrap()).unwrap();
+    }
+
+    let dpn = DistPointName::from_relative_name(entries).unwrap();
+    assert!(dpn.fullname().is_none());
+    let entries = dpn.relativename().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].data().as_slice(), b"rdn");
+}
+
+#[test]
 fn test_crl_distribution_points_extension() {
     let dp = DistPointBuilder::new()
         .distpoint(crl_uri_dist_point_name("http://example.com/crl"))

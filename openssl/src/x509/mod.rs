@@ -1358,6 +1358,28 @@ impl X509NameEntryRef {
             Asn1ObjectRef::from_ptr(object as *mut _)
         }
     }
+
+    /// Copies the entry to a new `X509NameEntry`.
+    #[corresponds(X509_NAME_ENTRY_create_by_OBJ)]
+    pub fn to_owned(&self) -> Result<X509NameEntry, ErrorStack> {
+        unsafe {
+            let data = self.data();
+            let ty = ffi::ASN1_STRING_type(data.as_ptr());
+
+            cvt_p(ffi::X509_NAME_ENTRY_create_by_OBJ(
+                ptr::null_mut(),
+                self.object().as_ptr(),
+                ty,
+                data.as_slice().as_ptr(),
+                data.as_slice().len() as c_int,
+            ))
+            .map(|p| X509NameEntry::from_ptr(p))
+        }
+    }
+}
+
+impl Stackable for X509NameEntry {
+    type StackType = ffi::stack_st_X509_NAME_ENTRY;
 }
 
 impl fmt::Debug for X509NameEntryRef {
@@ -2608,6 +2630,21 @@ impl DistPointName {
             Ok(DistPointName(dpn))
         }
     }
+
+    /// Constructs a `DistPointName` from a name relative to the CRL issuer, given as a
+    /// set of `X509NameEntry`s (a relative distinguished name).
+    pub fn from_relative_name(entries: Stack<X509NameEntry>) -> Result<Self, ErrorStack> {
+        unsafe {
+            ffi::init();
+
+            let dpn = cvt_p(ffi::DIST_POINT_NAME_new())?;
+            (*dpn).type_ = 1;
+            (*dpn).name.relativename = entries.as_ptr();
+            mem::forget(entries);
+
+            Ok(DistPointName(dpn))
+        }
+    }
 }
 
 impl DistPointNameRef {
@@ -2618,6 +2655,16 @@ impl DistPointNameRef {
                 return None;
             }
             StackRef::from_const_ptr_opt((*self.as_ptr()).name.fullname)
+        }
+    }
+
+    /// Returns the contents of this DistPointName if it is a name relative to the CRL issuer.
+    pub fn relativename(&self) -> Option<&StackRef<X509NameEntry>> {
+        unsafe {
+            if (*self.as_ptr()).type_ != 1 {
+                return None;
+            }
+            StackRef::from_const_ptr_opt((*self.as_ptr()).name.relativename)
         }
     }
 }
