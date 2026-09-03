@@ -23,7 +23,9 @@ use crate::bn::BigNum;
 use crate::cvt_p;
 use crate::error::ErrorStack;
 use crate::nid::Nid;
-use crate::x509::{CrlReason, GeneralName, Stack, X509Extension, X509Name, X509v3Context};
+use crate::x509::{
+    CrlReason, DistPoint, GeneralName, Stack, X509Extension, X509Name, X509v3Context,
+};
 use foreign_types::ForeignType;
 
 /// An extension which indicates whether a certificate is a CA certificate.
@@ -607,6 +609,37 @@ impl ReasonCode {
 
             cvt_p(ffi::X509V3_EXT_i2d(
                 Nid::from_raw(ffi::NID_crl_reason).as_raw(),
+                0,
+                self.0.as_ptr().cast(),
+            ))
+            .map(X509Extension)
+        }
+    }
+}
+
+/// An extension that identifies where to obtain the CRL(s) covering a certificate,
+/// as defined in RFC 5280 Section 4.2.1.13.
+pub struct CrlDistributionPoints(Stack<DistPoint>);
+
+impl CrlDistributionPoints {
+    /// Construct a new, empty `CrlDistributionPoints` extension.
+    pub fn new() -> Result<Self, ErrorStack> {
+        Ok(Self(Stack::new()?))
+    }
+
+    /// Adds a distribution point.
+    pub fn add_distribution_point(mut self, dp: DistPoint) -> Result<Self, ErrorStack> {
+        self.0.push(dp)?;
+        Ok(self)
+    }
+
+    /// Return a `CrlDistributionPoints` extension as an `X509Extension`.
+    pub fn build(self) -> Result<X509Extension, ErrorStack> {
+        unsafe {
+            ffi::init();
+
+            cvt_p(ffi::X509V3_EXT_i2d(
+                Nid::CRL_DISTRIBUTION_POINTS.as_raw(),
                 0,
                 self.0.as_ptr().cast(),
             ))

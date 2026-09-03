@@ -63,6 +63,8 @@ extern "C" {
         len_in: c_int,
     ) -> c_int;
 
+    pub fn ASN1_BIT_STRING_new() -> *mut ASN1_BIT_STRING;
+    pub fn ASN1_BIT_STRING_set_bit(a: *mut ASN1_BIT_STRING, n: c_int, value: c_int) -> c_int;
     pub fn ASN1_BIT_STRING_free(x: *mut ASN1_BIT_STRING);
     pub fn ASN1_OCTET_STRING_free(x: *mut ASN1_OCTET_STRING);
 

@@ -23,7 +23,8 @@ use crate::x509::X509Builder;
 #[cfg(any(ossl110, boringssl, awslc))]
 use crate::x509::X509PurposeId;
 use crate::x509::{
-    CrlNumber, CrlReason, X509CrlBuilder, X509PurposeRef, X509Ref, X509RevokedBuilder,
+    CrlDistributionPoints, CrlNumber, CrlReason, DistPointBuilder, DistPointName, GeneralName,
+    X509CrlBuilder, X509PurposeRef, X509Ref, X509RevokedBuilder,
 };
 use crate::x509::{
     CrlStatus, X509Crl, X509Extension, X509Name, X509Req, X509StoreContext, X509VerifyResult, X509,
@@ -1402,4 +1403,52 @@ fn test_x509_crl_builder() {
         CrlReason::KEY_COMPROMISE,
         CrlReason::from_raw(reason.get_i64().unwrap() as ffi::c_int)
     );
+}
+
+fn crl_uri_dist_point_name(uri: &str) -> DistPointName {
+    let mut names = Stack::new().unwrap();
+    names
+        .push(GeneralName::new_uri(uri.as_bytes()).unwrap())
+        .unwrap();
+    DistPointName::from_full_name(names).unwrap()
+}
+
+#[test]
+fn test_crl_distribution_points_extension() {
+    let dp = DistPointBuilder::new()
+        .distpoint(crl_uri_dist_point_name("http://example.com/crl"))
+        .build()
+        .unwrap();
+    let ext = CrlDistributionPoints::new()
+        .unwrap()
+        .add_distribution_point(dp)
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let (_, ca_cert) = build_ca().unwrap();
+    let rsa = Rsa::generate(2048).unwrap();
+    let pkey = PKey::from_rsa(rsa).unwrap();
+
+    let mut builder = X509::builder().unwrap();
+    builder.set_version(2).unwrap();
+    builder.set_subject_name(ca_cert.issuer_name()).unwrap();
+    builder.set_issuer_name(ca_cert.issuer_name()).unwrap();
+    builder.set_pubkey(&pkey).unwrap();
+    builder
+        .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+        .unwrap();
+    builder
+        .set_not_after(&Asn1Time::days_from_now(365).unwrap())
+        .unwrap();
+    builder.append_extension(ext).unwrap();
+    builder.sign(&pkey, MessageDigest::sha256()).unwrap();
+    let cert = builder.build();
+
+    let dps = cert.crl_distribution_points().unwrap();
+    assert_eq!(dps.len(), 1);
+    let uri = dps[0].distpoint().unwrap().fullname().unwrap()[0]
+        .uri()
+        .unwrap();
+    assert_eq!(uri, "http://example.com/crl");
 }

@@ -145,6 +145,8 @@ pub struct DIST_POINT {
 stack!(stack_st_DIST_POINT);
 
 extern "C" {
+    pub fn DIST_POINT_new() -> *mut DIST_POINT;
+    pub fn DIST_POINT_NAME_new() -> *mut DIST_POINT_NAME;
     pub fn DIST_POINT_free(dist_point: *mut DIST_POINT);
     pub fn DIST_POINT_NAME_free(dist_point: *mut DIST_POINT_NAME);
 }
