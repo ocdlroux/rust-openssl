@@ -24,7 +24,8 @@ use crate::cvt_p;
 use crate::error::ErrorStack;
 use crate::nid::Nid;
 use crate::x509::{
-    CrlReason, DistPoint, GeneralName, Stack, X509Extension, X509Name, X509v3Context,
+    reason_flags_bit_string, CrlReason, DistPoint, DistPointName, GeneralName, ReasonFlag, Stack,
+    X509Extension, X509Name, X509v3Context,
 };
 use foreign_types::ForeignType;
 
@@ -644,6 +645,111 @@ impl CrlDistributionPoints {
                 self.0.as_ptr().cast(),
             ))
             .map(X509Extension)
+        }
+    }
+}
+
+/// A critical CRL extension that identifies the distribution point and scope for a CRL,
+/// as defined in RFC 5280 Section 5.2.5.
+pub struct IssuingDistributionPoint {
+    distpoint: Option<DistPointName>,
+    only_contains_user_certs: bool,
+    only_contains_ca_certs: bool,
+    only_some_reasons: Option<Vec<ReasonFlag>>,
+    indirect_crl: bool,
+    only_contains_attribute_certs: bool,
+}
+
+impl Default for IssuingDistributionPoint {
+    fn default() -> IssuingDistributionPoint {
+        IssuingDistributionPoint::new()
+    }
+}
+
+impl IssuingDistributionPoint {
+    /// Construct a new `IssuingDistributionPoint` extension.
+    pub fn new() -> IssuingDistributionPoint {
+        IssuingDistributionPoint {
+            distpoint: None,
+            only_contains_user_certs: false,
+            only_contains_ca_certs: false,
+            only_some_reasons: None,
+            indirect_crl: false,
+            only_contains_attribute_certs: false,
+        }
+    }
+
+    /// Sets the distribution point name.
+    pub fn distpoint(mut self, distpoint: DistPointName) -> Self {
+        self.distpoint = Some(distpoint);
+        self
+    }
+
+    /// Sets the `onlyContainsUserCerts` flag to `true`.
+    pub fn only_contains_user_certs(mut self) -> Self {
+        self.only_contains_user_certs = true;
+        self
+    }
+
+    /// Sets the `onlyContainsCACerts` flag to `true`.
+    pub fn only_contains_ca_certs(mut self) -> Self {
+        self.only_contains_ca_certs = true;
+        self
+    }
+
+    /// Sets the revocation reasons covered by this CRL.
+    pub fn only_some_reasons(mut self, reasons: Vec<ReasonFlag>) -> Self {
+        self.only_some_reasons = Some(reasons);
+        self
+    }
+
+    /// Sets the `indirectCRL` flag to `true`.
+    pub fn indirect_crl(mut self) -> Self {
+        self.indirect_crl = true;
+        self
+    }
+
+    /// Sets the `onlyContainsAttributeCerts` flag to `true`.
+    pub fn only_contains_attribute_certs(mut self) -> Self {
+        self.only_contains_attribute_certs = true;
+        self
+    }
+
+    /// Return a `IssuingDistributionPoint` extension as an `X509Extension`.
+    pub fn build(self) -> Result<X509Extension, ErrorStack> {
+        unsafe {
+            ffi::init();
+
+            let only_some_reasons = match self.only_some_reasons {
+                Some(reasons) => Some(reason_flags_bit_string(&reasons)?),
+                None => None,
+            };
+
+            let idp = cvt_p(ffi::ISSUING_DIST_POINT_new())?;
+
+            if let Some(distpoint) = self.distpoint {
+                (*idp).distpoint = distpoint.as_ptr();
+                std::mem::forget(distpoint);
+            }
+            (*idp).onlyuser = self.only_contains_user_certs as _;
+            (*idp).onlyCA = self.only_contains_ca_certs as _;
+            (*idp).indirectCRL = self.indirect_crl as _;
+            (*idp).onlyattr = self.only_contains_attribute_certs as _;
+            if let Some(reasons) = only_some_reasons {
+                (*idp).onlysomereasons = reasons.as_ptr();
+                std::mem::forget(reasons);
+            }
+
+            let r = cvt_p(ffi::X509V3_EXT_i2d(
+                Nid::ISSUING_DISTRIBUTION_POINT.as_raw(),
+                1,
+                idp.cast(),
+            ))
+            .map(X509Extension);
+
+            ffi::ISSUING_DIST_POINT_free(idp);
+
+            r
         }
     }
 }

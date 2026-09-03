@@ -41,6 +41,7 @@ use openssl_macros::corresponds;
 
 pub use crate::x509::extension::CrlDistributionPoints;
 pub use crate::x509::extension::CrlNumber;
+pub use crate::x509::extension::IssuingDistributionPoint;
 pub use crate::x509::extension::ReasonCode;
 
 pub mod verify;

@@ -24,7 +24,7 @@ use crate::x509::X509Builder;
 use crate::x509::X509PurposeId;
 use crate::x509::{
     CrlDistributionPoints, CrlNumber, CrlReason, DistPointBuilder, DistPointName, GeneralName,
-    X509CrlBuilder, X509PurposeRef, X509Ref, X509RevokedBuilder,
+    IssuingDistributionPoint, X509CrlBuilder, X509PurposeRef, X509Ref, X509RevokedBuilder,
 };
 use crate::x509::{
     CrlStatus, X509Crl, X509Extension, X509Name, X509Req, X509StoreContext, X509VerifyResult, X509,
@@ -1451,4 +1451,29 @@ fn test_crl_distribution_points_extension() {
         .uri()
         .unwrap();
     assert_eq!(uri, "http://example.com/crl");
+}
+
+#[test]
+fn test_issuing_distribution_point_extension() {
+    let (pkey, ca_cert) = build_ca().unwrap();
+
+    let dummy = X509::builder().unwrap();
+    let ctx = dummy.x509v3_context(Some(ca_cert.as_ref()), None);
+    let aki = AuthorityKeyIdentifier::new()
+        .issuer(true)
+        .build(&ctx)
+        .unwrap();
+    let n = CrlNumber::new(BigNum::from_u32(1).unwrap())
+        .unwrap()
+        .build()
+        .unwrap();
+    let idp = IssuingDistributionPoint::new()
+        .distpoint(crl_uri_dist_point_name("http://example.com/crl"))
+        .only_contains_user_certs()
+        .build()
+        .unwrap();
+
+    let exts = vec![aki, n, idp];
+    let crl = build_crl(&pkey, &ca_cert, exts).unwrap();
+    assert!(crl.verify(&pkey).unwrap());
 }
