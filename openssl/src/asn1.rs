@@ -671,7 +671,28 @@ foreign_type_and_impl_send_sync! {
     pub struct Asn1BitStringRef;
 }
 
+impl Asn1BitString {
+    /// Creates a new, empty `Asn1BitString`.
+    #[corresponds(ASN1_BIT_STRING_new)]
+    pub fn new() -> Result<Self, ErrorStack> {
+        unsafe { cvt_p(ffi::ASN1_BIT_STRING_new()).map(Asn1BitString) }
+    }
+}
+
 impl Asn1BitStringRef {
+    /// Sets or clears the bit at the given position.
+    #[corresponds(ASN1_BIT_STRING_set_bit)]
+    pub fn set_bit(&mut self, n: i32, value: bool) -> Result<(), ErrorStack> {
+        unsafe {
+            cvt(ffi::ASN1_BIT_STRING_set_bit(
+                self.as_ptr(),
+                n,
+                value as c_int,
+            ))
+            .map(|_| ())
+        }
+    }
+
     /// Returns the Asn1BitString as a slice.
     #[corresponds(ASN1_STRING_get0_data)]
     pub fn as_slice(&self) -> &[u8] {
@@ -840,6 +861,17 @@ foreign_type_and_impl_send_sync! {
     pub struct Asn1Enumerated;
     /// A reference to an [`Asn1Enumerated`].
     pub struct Asn1EnumeratedRef;
+}
+
+impl Asn1Enumerated {
+    /// Converts a bignum to an `Asn1Enumerated`.
+    #[corresponds(BN_to_ASN1_ENUMERATED)]
+    pub fn from_bn(bn: &BigNumRef) -> Result<Self, ErrorStack> {
+        unsafe {
+            cvt_p(ffi::BN_to_ASN1_ENUMERATED(bn.as_ptr(), ptr::null_mut()))
+                .map(|p| Asn1Enumerated::from_ptr(p))
+        }
+    }
 }
 
 impl Asn1EnumeratedRef {

@@ -22,8 +22,8 @@ use std::ptr;
 use std::str;
 
 use crate::asn1::{
-    Asn1BitStringRef, Asn1Enumerated, Asn1Integer, Asn1IntegerRef, Asn1Object, Asn1ObjectRef,
-    Asn1OctetStringRef, Asn1StringRef, Asn1TimeRef, Asn1Type,
+    Asn1BitString, Asn1BitStringRef, Asn1Enumerated, Asn1Integer, Asn1IntegerRef, Asn1Object,
+    Asn1ObjectRef, Asn1OctetStringRef, Asn1StringRef, Asn1TimeRef, Asn1Type,
 };
 use crate::bio::MemBioSlice;
 use crate::conf::ConfRef;
@@ -39,7 +39,10 @@ use crate::util::{self, ForeignTypeExt, ForeignTypeRefExt};
 use crate::{cvt, cvt_n, cvt_p, cvt_p_const};
 use openssl_macros::corresponds;
 
+pub use crate::x509::extension::CrlDistributionPoints;
 pub use crate::x509::extension::CrlNumber;
+pub use crate::x509::extension::IssuingDistributionPoint;
+pub use crate::x509::extension::ReasonCode;
 
 pub mod verify;
 
@@ -1355,6 +1358,28 @@ impl X509NameEntryRef {
             Asn1ObjectRef::from_ptr(object as *mut _)
         }
     }
+
+    /// Copies the entry to a new `X509NameEntry`.
+    #[corresponds(X509_NAME_ENTRY_create_by_OBJ)]
+    pub fn to_owned(&self) -> Result<X509NameEntry, ErrorStack> {
+        unsafe {
+            let data = self.data();
+            let ty = ffi::ASN1_STRING_type(data.as_ptr());
+
+            cvt_p(ffi::X509_NAME_ENTRY_create_by_OBJ(
+                ptr::null_mut(),
+                self.object().as_ptr(),
+                ty,
+                data.as_slice().as_ptr(),
+                data.as_slice().len() as c_int,
+            ))
+            .map(|p| X509NameEntry::from_ptr(p))
+        }
+    }
+}
+
+impl Stackable for X509NameEntry {
+    type StackType = ffi::stack_st_X509_NAME_ENTRY;
 }
 
 impl fmt::Debug for X509NameEntryRef {
@@ -1615,6 +1640,40 @@ impl CrlReason {
     }
 }
 
+/// One of the revocation reasons covered by a [`DistPoint`] or [`IssuingDistributionPoint`],
+/// as defined in RFC 5280 Section 4.2.1.13.
+///
+/// Note that these values differ from [`CrlReason`]'s: they identify a bit position in the
+/// `ReasonFlags` bit string, not a CRL entry reason code.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct ReasonFlag(c_int);
+
+#[allow(missing_docs)] // no need to document the constants
+impl ReasonFlag {
+    pub const KEY_COMPROMISE: ReasonFlag = ReasonFlag(1);
+    pub const CA_COMPROMISE: ReasonFlag = ReasonFlag(2);
+    pub const AFFILIATION_CHANGED: ReasonFlag = ReasonFlag(3);
+    pub const SUPERSEDED: ReasonFlag = ReasonFlag(4);
+    pub const CESSATION_OF_OPERATION: ReasonFlag = ReasonFlag(5);
+    pub const CERTIFICATE_HOLD: ReasonFlag = ReasonFlag(6);
+    pub const PRIVILEGE_WITHDRAWN: ReasonFlag = ReasonFlag(7);
+    pub const AA_COMPROMISE: ReasonFlag = ReasonFlag(8);
+
+    /// Returns the bit position represented by this type.
+    pub const fn as_raw(&self) -> c_int {
+        self.0
+    }
+}
+
+/// Builds an ASN.1 `BIT STRING` with a bit set for each of the given reason flags.
+fn reason_flags_bit_string(reasons: &[ReasonFlag]) -> Result<Asn1BitString, ErrorStack> {
+    let mut bits = Asn1BitString::new()?;
+    for reason in reasons {
+        bits.set_bit(reason.as_raw(), true)?;
+    }
+    Ok(bits)
+}
+
 /// A builder used to construct an `X509Revoked`.
 pub struct X509RevokedBuilder(X509Revoked);
 
@@ -1647,6 +1706,26 @@ impl X509RevokedBuilder {
             cvt(ffi::X509_REVOKED_set_serialNumber(
                 self.0.as_ptr(),
                 serial.as_ptr(),
+            ))
+            .map(|_| ())
+        }
+    }
+
+    /// Add an X509 extension value to the `X509Revoked`.
+    ///
+    /// This works just as `append_extension` except it takes ownership of the `X509Extension`.
+    pub fn append_extension(&mut self, extension: X509Extension) -> Result<(), ErrorStack> {
+        self.append_extension2(&extension)
+    }
+
+    /// Add an X509 extension value to the `X509Revoked`.
+    #[corresponds(X509_REVOKED_add_ext)]
+    pub fn append_extension2(&mut self, extension: &X509ExtensionRef) -> Result<(), ErrorStack> {
+        unsafe {
+            cvt(ffi::X509_REVOKED_add_ext(
+                self.0.as_ptr(),
+                extension.as_ptr(),
+                -1,
             ))
             .map(|_| ())
         }
@@ -1746,10 +1825,6 @@ impl X509RevokedRef {
         }
     }
 }
-
-/// The CRL entry extension identifying the reason for revocation see [`CrlReason`],
-/// this is as defined in RFC 5280 Section 5.3.1.
-pub enum ReasonCode {}
 
 // SAFETY: ReasonCode is defined to be an Asn1Enumerated in the RFC
 // and in OpenSSL.
@@ -2233,19 +2308,23 @@ impl GeneralName {
         Ok(gn)
     }
 
-    pub(crate) fn new_email(email: &[u8]) -> Result<GeneralName, ErrorStack> {
+    /// Creates a new `GeneralName` of type `rfc822Name`.
+    pub fn new_email(email: &[u8]) -> Result<GeneralName, ErrorStack> {
         unsafe { GeneralName::new(ffi::GEN_EMAIL, Asn1Type::IA5STRING, email) }
     }
 
-    pub(crate) fn new_dns(dns: &[u8]) -> Result<GeneralName, ErrorStack> {
+    /// Creates a new `GeneralName` of type `dNSName`.
+    pub fn new_dns(dns: &[u8]) -> Result<GeneralName, ErrorStack> {
         unsafe { GeneralName::new(ffi::GEN_DNS, Asn1Type::IA5STRING, dns) }
     }
 
-    pub(crate) fn new_uri(uri: &[u8]) -> Result<GeneralName, ErrorStack> {
+    /// Creates a new `GeneralName` of type `uniformResourceIdentifier`.
+    pub fn new_uri(uri: &[u8]) -> Result<GeneralName, ErrorStack> {
         unsafe { GeneralName::new(ffi::GEN_URI, Asn1Type::IA5STRING, uri) }
     }
 
-    pub(crate) fn new_ip(ip: IpAddr) -> Result<GeneralName, ErrorStack> {
+    /// Creates a new `GeneralName` of type `iPAddress`.
+    pub fn new_ip(ip: IpAddr) -> Result<GeneralName, ErrorStack> {
         match ip {
             IpAddr::V4(addr) => unsafe {
                 GeneralName::new(ffi::GEN_IPADD, Asn1Type::OCTET_STRING, &addr.octets())
@@ -2256,7 +2335,8 @@ impl GeneralName {
         }
     }
 
-    pub(crate) fn new_rid(oid: Asn1Object) -> Result<GeneralName, ErrorStack> {
+    /// Creates a new `GeneralName` of type `registeredID`.
+    pub fn new_rid(oid: Asn1Object) -> Result<GeneralName, ErrorStack> {
         unsafe {
             ffi::init();
             let gn = cvt_p(ffi::GENERAL_NAME_new())?;
@@ -2277,7 +2357,8 @@ impl GeneralName {
         }
     }
 
-    pub(crate) fn new_other_name(oid: Asn1Object, value: &[u8]) -> Result<GeneralName, ErrorStack> {
+    /// Creates a new `GeneralName` of type `otherName`.
+    pub fn new_other_name(oid: Asn1Object, value: &[u8]) -> Result<GeneralName, ErrorStack> {
         unsafe {
             ffi::init();
 
@@ -2305,7 +2386,8 @@ impl GeneralName {
         }
     }
 
-    pub(crate) fn new_dir_name(name: &X509NameRef) -> Result<GeneralName, ErrorStack> {
+    /// Creates a new `GeneralName` of type `directoryName`.
+    pub fn new_dir_name(name: &X509NameRef) -> Result<GeneralName, ErrorStack> {
         unsafe {
             ffi::init();
             let gn = cvt_p(ffi::GENERAL_NAME_new())?;
@@ -2453,6 +2535,77 @@ impl DistPointRef {
     }
 }
 
+/// A builder used to construct a `DistPoint`.
+pub struct DistPointBuilder {
+    distpoint: Option<DistPointName>,
+    reasons: Option<Vec<ReasonFlag>>,
+    crl_issuer: Option<Stack<GeneralName>>,
+}
+
+impl Default for DistPointBuilder {
+    fn default() -> DistPointBuilder {
+        DistPointBuilder::new()
+    }
+}
+
+impl DistPointBuilder {
+    /// Creates a new builder.
+    pub fn new() -> DistPointBuilder {
+        DistPointBuilder {
+            distpoint: None,
+            reasons: None,
+            crl_issuer: None,
+        }
+    }
+
+    /// Sets the name of this distribution point.
+    pub fn distpoint(mut self, distpoint: DistPointName) -> Self {
+        self.distpoint = Some(distpoint);
+        self
+    }
+
+    /// Sets the revocation reasons covered by this distribution point.
+    pub fn reasons(mut self, reasons: Vec<ReasonFlag>) -> Self {
+        self.reasons = Some(reasons);
+        self
+    }
+
+    /// Sets the CRL issuer for this distribution point.
+    pub fn crl_issuer(mut self, crl_issuer: Stack<GeneralName>) -> Self {
+        self.crl_issuer = Some(crl_issuer);
+        self
+    }
+
+    /// Consumes the builder, returning the `DistPoint`.
+    pub fn build(self) -> Result<DistPoint, ErrorStack> {
+        unsafe {
+            ffi::init();
+
+            let reasons = match self.reasons {
+                Some(reasons) => Some(reason_flags_bit_string(&reasons)?),
+                None => None,
+            };
+
+            let dp = cvt_p(ffi::DIST_POINT_new())?;
+
+            if let Some(distpoint) = self.distpoint {
+                (*dp).distpoint = distpoint.as_ptr();
+                mem::forget(distpoint);
+            }
+            if let Some(reasons) = reasons {
+                (*dp).reasons = reasons.as_ptr();
+                mem::forget(reasons);
+            }
+            if let Some(crl_issuer) = self.crl_issuer {
+                (*dp).CRLissuer = crl_issuer.as_ptr();
+                mem::forget(crl_issuer);
+            }
+
+            Ok(DistPoint(dp))
+        }
+    }
+}
+
 foreign_type_and_impl_send_sync! {
     type CType = ffi::DIST_POINT_NAME;
     fn drop = ffi::DIST_POINT_NAME_free;
@@ -2463,6 +2616,37 @@ foreign_type_and_impl_send_sync! {
     pub struct DistPointNameRef;
 }
 
+impl DistPointName {
+    /// Constructs a `DistPointName` from a full name, given as a set of `GeneralName`s.
+    pub fn from_full_name(names: Stack<GeneralName>) -> Result<Self, ErrorStack> {
+        unsafe {
+            ffi::init();
+
+            let dpn = cvt_p(ffi::DIST_POINT_NAME_new())?;
+            (*dpn).type_ = 0;
+            (*dpn).name.fullname = names.as_ptr();
+            mem::forget(names);
+
+            Ok(DistPointName(dpn))
+        }
+    }
+
+    /// Constructs a `DistPointName` from a name relative to the CRL issuer, given as a
+    /// set of `X509NameEntry`s (a relative distinguished name).
+    pub fn from_relative_name(entries: Stack<X509NameEntry>) -> Result<Self, ErrorStack> {
+        unsafe {
+            ffi::init();
+
+            let dpn = cvt_p(ffi::DIST_POINT_NAME_new())?;
+            (*dpn).type_ = 1;
+            (*dpn).name.relativename = entries.as_ptr();
+            mem::forget(entries);
+
+            Ok(DistPointName(dpn))
+        }
+    }
+}
+
 impl DistPointNameRef {
     /// Returns the contents of this DistPointName if it is a fullname.
     pub fn fullname(&self) -> Option<&StackRef<GeneralName>> {
@@ -2471,6 +2655,16 @@ impl DistPointNameRef {
                 return None;
             }
             StackRef::from_const_ptr_opt((*self.as_ptr()).name.fullname)
+        }
+    }
+
+    /// Returns the contents of this DistPointName if it is a name relative to the CRL issuer.
+    pub fn relativename(&self) -> Option<&StackRef<X509NameEntry>> {
+        unsafe {
+            if (*self.as_ptr()).type_ != 1 {
+                return None;
+            }
+            StackRef::from_const_ptr_opt((*self.as_ptr()).name.relativename)
         }
     }
 }

@@ -63,6 +63,8 @@ extern "C" {
         len_in: c_int,
     ) -> c_int;
 
+    pub fn ASN1_BIT_STRING_new() -> *mut ASN1_BIT_STRING;
+    pub fn ASN1_BIT_STRING_set_bit(a: *mut ASN1_BIT_STRING, n: c_int, value: c_int) -> c_int;
     pub fn ASN1_BIT_STRING_free(x: *mut ASN1_BIT_STRING);
     pub fn ASN1_OCTET_STRING_free(x: *mut ASN1_OCTET_STRING);
 
@@ -99,6 +101,10 @@ extern "C" {
     pub fn ASN1_ENUMERATED_free(a: *mut ASN1_ENUMERATED);
     #[cfg(ossl110)]
     pub fn ASN1_ENUMERATED_get_int64(pr: *mut i64, a: *const ASN1_ENUMERATED) -> c_int;
+    pub fn BN_to_ASN1_ENUMERATED(
+        bn: *const BIGNUM,
+        ai: *mut ASN1_ENUMERATED,
+    ) -> *mut ASN1_ENUMERATED;
 
     pub fn ASN1_TYPE_new() -> *mut ASN1_TYPE;
     pub fn ASN1_TYPE_set(a: *mut ASN1_TYPE, type_: c_int, value: *mut c_void);

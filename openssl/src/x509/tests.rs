@@ -18,11 +18,14 @@ use crate::x509::extension::{
 use crate::x509::store::X509Lookup;
 use crate::x509::store::X509StoreBuilder;
 use crate::x509::verify::{X509VerifyFlags, X509VerifyParam};
+#[cfg(ossl110)]
+use crate::x509::X509Builder;
 #[cfg(any(ossl110, boringssl, awslc))]
 use crate::x509::X509PurposeId;
-use crate::x509::{CrlNumber, X509CrlBuilder, X509PurposeRef, X509Ref, X509RevokedBuilder};
-#[cfg(ossl110)]
-use crate::x509::{CrlReason, X509Builder};
+use crate::x509::{
+    CrlDistributionPoints, CrlNumber, CrlReason, DistPointBuilder, DistPointName, GeneralName,
+    IssuingDistributionPoint, X509CrlBuilder, X509PurposeRef, X509Ref, X509RevokedBuilder,
+};
 use crate::x509::{
     CrlStatus, X509Crl, X509Extension, X509Name, X509Req, X509StoreContext, X509VerifyResult, X509,
 };
@@ -1337,6 +1340,8 @@ fn build_crl(
 
     builder.set_serial_number(&*bn.to_asn1_integer()?)?;
     builder.set_revocation_date(&d)?;
+    let reason = ReasonCode::new(CrlReason::KEY_COMPROMISE)?.build()?;
+    builder.append_extension(reason)?;
     let revoked = builder.build();
     let revokeds = vec![revoked];
 
@@ -1385,4 +1390,108 @@ fn test_x509_crl_builder() {
         .expect("Crl Number extension should be present");
     assert!(!critical, "Crl Number extension is not critical");
     assert_eq!(n.to_bn().unwrap().to_string(), "42");
+
+    let entry = &crl.get_revoked().unwrap()[0];
+    #[cfg_attr(not(ossl110), allow(unused_variables))]
+    let (critical, reason) = entry
+        .extension::<ReasonCode>()
+        .unwrap()
+        .expect("Reason code extension should be present");
+    assert!(!critical, "Reason code extension is not critical");
+    #[cfg(ossl110)]
+    assert_eq!(
+        CrlReason::KEY_COMPROMISE,
+        CrlReason::from_raw(reason.get_i64().unwrap() as ffi::c_int)
+    );
+}
+
+fn crl_uri_dist_point_name(uri: &str) -> DistPointName {
+    let mut names = Stack::new().unwrap();
+    names
+        .push(GeneralName::new_uri(uri.as_bytes()).unwrap())
+        .unwrap();
+    DistPointName::from_full_name(names).unwrap()
+}
+
+#[test]
+fn test_dist_point_name_relative() {
+    let mut name = X509Name::builder().unwrap();
+    name.append_entry_by_nid(Nid::COMMONNAME, "rdn").unwrap();
+    let name = name.build();
+
+    let mut entries = Stack::new().unwrap();
+    for entry in name.entries() {
+        entries.push(entry.to_owned().unwrap()).unwrap();
+    }
+
+    let dpn = DistPointName::from_relative_name(entries).unwrap();
+    assert!(dpn.fullname().is_none());
+    let entries = dpn.relativename().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].data().as_slice(), b"rdn");
+}
+
+#[test]
+fn test_crl_distribution_points_extension() {
+    let dp = DistPointBuilder::new()
+        .distpoint(crl_uri_dist_point_name("http://example.com/crl"))
+        .build()
+        .unwrap();
+    let ext = CrlDistributionPoints::new()
+        .unwrap()
+        .add_distribution_point(dp)
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let (_, ca_cert) = build_ca().unwrap();
+    let rsa = Rsa::generate(2048).unwrap();
+    let pkey = PKey::from_rsa(rsa).unwrap();
+
+    let mut builder = X509::builder().unwrap();
+    builder.set_version(2).unwrap();
+    builder.set_subject_name(ca_cert.issuer_name()).unwrap();
+    builder.set_issuer_name(ca_cert.issuer_name()).unwrap();
+    builder.set_pubkey(&pkey).unwrap();
+    builder
+        .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+        .unwrap();
+    builder
+        .set_not_after(&Asn1Time::days_from_now(365).unwrap())
+        .unwrap();
+    builder.append_extension(ext).unwrap();
+    builder.sign(&pkey, MessageDigest::sha256()).unwrap();
+    let cert = builder.build();
+
+    let dps = cert.crl_distribution_points().unwrap();
+    assert_eq!(dps.len(), 1);
+    let uri = dps[0].distpoint().unwrap().fullname().unwrap()[0]
+        .uri()
+        .unwrap();
+    assert_eq!(uri, "http://example.com/crl");
+}
+
+#[test]
+fn test_issuing_distribution_point_extension() {
+    let (pkey, ca_cert) = build_ca().unwrap();
+
+    let dummy = X509::builder().unwrap();
+    let ctx = dummy.x509v3_context(Some(ca_cert.as_ref()), None);
+    let aki = AuthorityKeyIdentifier::new()
+        .issuer(true)
+        .build(&ctx)
+        .unwrap();
+    let n = CrlNumber::new(BigNum::from_u32(1).unwrap())
+        .unwrap()
+        .build()
+        .unwrap();
+    let idp = IssuingDistributionPoint::new()
+        .distpoint(crl_uri_dist_point_name("http://example.com/crl"))
+        .only_contains_user_certs()
+        .build()
+        .unwrap();
+
+    let exts = vec![aki, n, idp];
+    let crl = build_crl(&pkey, &ca_cert, exts).unwrap();
+    assert!(crl.verify(&pkey).unwrap());
 }

@@ -188,6 +188,13 @@ extern "C" {
     pub fn X509_EXTENSION_free(ext: *mut X509_EXTENSION);
 
     pub fn X509_NAME_ENTRY_free(x: *mut X509_NAME_ENTRY);
+    pub fn X509_NAME_ENTRY_create_by_OBJ(
+        ne: *mut *mut X509_NAME_ENTRY,
+        obj: *const ASN1_OBJECT,
+        type_: c_int,
+        bytes: *const c_uchar,
+        len: c_int,
+    ) -> *mut X509_NAME_ENTRY;
 
     pub fn X509_NAME_new() -> *mut X509_NAME;
     pub fn X509_NAME_cmp(x: *const X509_NAME, y: *const X509_NAME) -> c_int;
